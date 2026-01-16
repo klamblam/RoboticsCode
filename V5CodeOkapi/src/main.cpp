@@ -6,7 +6,7 @@ pros::Motor LF(1, pros::MotorGearset::green);
 pros::Motor RF(10, pros::MotorGearset::green);
 pros::Motor LB(11, pros::MotorGearset::green);
 pros::Motor RB(20, pros::MotorGearset::green);
-pros::Motor Intake(2, pros::MotorGearset::green);
+pros::Motor Intake(8, pros::MotorGearset::green);
 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 pros::Imu imu(9);
