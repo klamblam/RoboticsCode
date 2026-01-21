@@ -9,7 +9,7 @@ pros::Motor RB(20, pros::MotorGearset::green);
 pros::Motor Intake(8, pros::MotorGearset::green);
 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
-pros::Imu imu(9);
+pros::Imu imu(7);
 
 // ---- Constants ----
 static constexpr double WHEEL_DIAMETER_MM = 101.6;
@@ -69,7 +69,7 @@ double mmToMotorDeg(double mm) {
 }
 
 // These are “drive axis estimators” based on your mixing.
-// They output motor degrees (since get_position() is degrees).
+
 double avgForwardDeg() {
     return (LF.get_position() + RF.get_position() + LB.get_position() + RB.get_position()) / 4.0;
 }
