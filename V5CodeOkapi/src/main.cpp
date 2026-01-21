@@ -246,8 +246,8 @@ void opcontrol() {
         int lb = fwd - strafe + rot;
         int rb = fwd + strafe - rot;
 
-        bool r1 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
-        bool r2 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+        bool r1 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
+        bool r2 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
 
         if (r1 && !lastR1) intakeState = (intakeState == 1) ? 0 : 1;
         if (r2 && !lastR2) intakeState = (intakeState == -1) ? 0 : -1;
