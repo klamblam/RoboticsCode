@@ -7,6 +7,7 @@ pros::Motor RF(10, pros::MotorGearset::green);
 pros::Motor LB(11, pros::MotorGearset::green);
 pros::Motor RB(20, pros::MotorGearset::green);
 pros::Motor Intake(8, pros::MotorGearset::green);
+pros::Motor Lift(6, pros::MotorGearset::green);
 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 pros::Imu imu(7);
@@ -227,14 +228,25 @@ void initialize() {
     }
 }
 
-void autonomous() {}
-
+void autonomous() {
+    driveMmHoldHeading(10.0, 0);
+    turnToHeading(90.0);
+    strafeMmHoldHeading(10.0, 90.0);
+    Intake.move(720); // Run intake at full power for 1 second
+    pros::delay(1000);
+}
 void opcontrol() {
     imu.reset();
 
+    // Intake toggle state
     static bool lastR1 = false;
     static bool lastR2 = false;
-    static int intakeState = 0;
+    static int intakeState = 0;   // 1 = forward, -1 = reverse, 0 = off
+
+    // Lift toggle state
+    static bool lastL1 = false;
+    static bool lastL2 = false;
+    static int liftState = 0;     // 1 = up, -1 = down, 0 = off
 
     while (true) {
         int fwd    = applyDeadzone(controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y));
@@ -246,8 +258,9 @@ void opcontrol() {
         int lb = fwd - strafe + rot;
         int rb = fwd + strafe - rot;
 
-        bool r1 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
-        bool r2 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
+        // Intake toggles (R1 forward, R2 reverse)
+        bool r1 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R1);
+        bool r2 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_R2);
 
         if (r1 && !lastR1) intakeState = (intakeState == 1) ? 0 : 1;
         if (r2 && !lastR2) intakeState = (intakeState == -1) ? 0 : -1;
@@ -255,7 +268,19 @@ void opcontrol() {
         lastR1 = r1;
         lastR2 = r2;
 
+        // Lift toggles (L1 up, L2 down)
+        bool l1 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L1);
+        bool l2 = controller.get_digital(pros::E_CONTROLLER_DIGITAL_L2);
+
+        if (l1 && !lastL1) liftState = (liftState == 1) ? 0 : 1;
+        if (l2 && !lastL2) liftState = (liftState == -1) ? 0 : -1;
+
+        lastL1 = l1;
+        lastL2 = l2;
+
+        // Apply motor outputs
         Intake.move(intakeState == 1 ? 127 : (intakeState == -1 ? -127 : 0));
+        Lift.move(liftState == 1 ? 127 : (liftState == -1 ? -127 : 0));
 
         setDrive(lf, rf, lb, rb);
         pros::delay(LOOP_MS);
