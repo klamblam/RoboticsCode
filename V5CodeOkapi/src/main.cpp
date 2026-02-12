@@ -2,12 +2,14 @@
 #include "lemlib/api.hpp"
 #include <cmath>
 
+// ---- Devices ----
 pros::Motor LF(1, pros::MotorGearset::green);
 pros::Motor RF(10, pros::MotorGearset::green);
 pros::Motor LB(11, pros::MotorGearset::green);
 pros::Motor RB(20, pros::MotorGearset::green);
 pros::Motor Intake(8, pros::MotorGearset::green);
 pros::Motor Lift(6, pros::MotorGearset::green);
+pros::Motor Lift2(5, pros::MotorGearset::green);
 
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
 pros::Imu imu(7);
@@ -229,10 +231,10 @@ void initialize() {
 }
 
 void autonomous() {
-    driveMmHoldHeading(10.0, 0);
+    driveMmHoldHeading(10.0, 0);    
     turnToHeading(90.0);
     strafeMmHoldHeading(10.0, 90.0);
-    Intake.move(720); // Run intake at full power for 1 second
+    Intake.move(720);
     pros::delay(1000);
 }
 void opcontrol() {
@@ -281,6 +283,7 @@ void opcontrol() {
         // Apply motor outputs
         Intake.move(intakeState == 1 ? 127 : (intakeState == -1 ? -127 : 0));
         Lift.move(liftState == 1 ? 127 : (liftState == -1 ? -127 : 0));
+        lift2.move(liftState == 1 ? 127 : (liftState == -1 ? -127 : 0));
 
         setDrive(lf, rf, lb, rb);
         pros::delay(LOOP_MS);
