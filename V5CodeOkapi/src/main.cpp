@@ -283,7 +283,7 @@ void opcontrol() {
         // Apply motor outputs
         Intake.move(intakeState == 1 ? 127 : (intakeState == -1 ? -127 : 0));
         Lift.move(liftState == 1 ? 127 : (liftState == -1 ? -127 : 0));
-        lift2.move(liftState == 1 ? 127 : (liftState == -1 ? -127 : 0));
+        Lift2.move(liftState == 1 ? 127 : (liftState == -1 ? -127 : 0));
 
         setDrive(lf, rf, lb, rb);
         pros::delay(LOOP_MS);
