@@ -25,7 +25,7 @@ static constexpr double DEGREES_PER_REV = 360.0;
 // X-drive geometry (45° wheel axis)
 static constexpr double SQRT2 = 1.4142135623730951;
 
-// Prevent dead output that can't overcome stiction
+// Prevent dead output that can't overcome stiction (only used FAR from target now)
 static constexpr int MIN_POWER = 12;
 
 // Control loop timing
@@ -44,6 +44,16 @@ static int clamp127(int v) {
 
 static int sgn(int x) {
     return (x > 0) - (x < 0);
+}
+
+static double deadband(double x, double dz) {
+    return (std::abs(x) < dz) ? 0.0 : x;
+}
+
+static double clampD(double x, double lo, double hi) {
+    if (x < lo) return lo;
+    if (x > hi) return hi;
+    return x;
 }
 
 // ---- Drive I/O ----
@@ -72,7 +82,6 @@ double mmToMotorDeg(double mm) {
 }
 
 // These are “drive axis estimators” based on your mixing.
-
 double avgForwardDeg() {
     return (LF.get_position() + RF.get_position() + LB.get_position() + RB.get_position()) / 4.0;
 }
@@ -99,8 +108,9 @@ double headingErrorDeg(double targetDeg) {
 
 // ---- Motion ----
 void turnToHeading(double targetDeg, int timeoutMs = 2000) {
-    const double kP = 2.2;
-    const double kD = 9.0;
+    // Calmer D for 10ms loops (prevents noise-jitter)
+    const double kP = 2.0;
+    const double kD = 0.25;
 
     double lastErr = headingErrorDeg(targetDeg);
     int start = pros::millis();
@@ -116,12 +126,14 @@ void turnToHeading(double targetDeg, int timeoutMs = 2000) {
         double deriv = (err - lastErr) / dt;
         lastErr = err;
 
-        if (std::abs(err) < 1.0) break;
+        // settle: both small error and not spinning fast
+        if (std::abs(err) < 1.0 && std::abs(deriv) < 25.0) break;
 
         int power = (int)(kP * err + kD * deriv);
         power = clamp127(power);
 
-        if (std::abs(power) < MIN_POWER) {
+        // Only force MIN_POWER when not basically done
+        if (std::abs(err) > 8.0 && std::abs(power) < MIN_POWER) {
             power = MIN_POWER * sgn(power);
         }
 
@@ -133,19 +145,34 @@ void turnToHeading(double targetDeg, int timeoutMs = 2000) {
     pros::delay(40);
 }
 
-// Drive forward mm while holding heading.
+// Drive forward mm while holding heading (X-drive correct mixing + heading filter)
 void driveMmHoldHeading(double mm, double headingDeg, int timeoutMs = 3000) {
     resetDriveEncoders();
 
     const double targetDeg = mmToMotorDeg(mm * SQRT2);
 
+    // Distance PID (D is tiny because dt is ~0.01s)
     const double kP_dist = 0.55;
-    const double kD_dist = 2.0;
-    const double kP_head = 1.6;
+    const double kD_dist = 0.05;
+
+    // Heading hold tuning
+    const double kP_head = 1.0;
+    const double HEAD_DB_DEG = 1.2;     // ignore tiny IMU noise
+    const int    MAX_TURNFIX = 35;      // prevent twitchy corrections
+    const double HEAD_LPF = 0.25;       // low-pass filter (0..1), lower = smoother
+
+    // Settle windows
+    const double DIST_ERR_EXIT_DEG = 20.0;   // close enough position
+    const double DIST_VEL_EXIT_DPS = 60.0;   // close enough "velocity" (derivative)
+
+    // MIN_POWER only far away
+    const double MIN_PWR_DISABLE_ZONE_DEG = 120.0;
 
     double lastErr = targetDeg;
     int start = pros::millis();
     int lastT = start;
+
+    double headErrFilt = 0.0;
 
     while (pros::millis() - start < timeoutMs) {
         int now = pros::millis();
@@ -155,41 +182,70 @@ void driveMmHoldHeading(double mm, double headingDeg, int timeoutMs = 3000) {
 
         double pos = avgForwardDeg();
         double err = targetDeg - pos;
-        double deriv = (err - lastErr) / dt;
+        double deriv = (err - lastErr) / dt;  // deg/sec-ish
         lastErr = err;
 
-        if (std::abs(err) < 10.0) break;
+        // settle: close AND not moving fast
+        if (std::abs(err) < DIST_ERR_EXIT_DEG && std::abs(deriv) < DIST_VEL_EXIT_DPS) break;
 
         int base = (int)(kP_dist * err + kD_dist * deriv);
         base = clamp127(base);
 
-        if (std::abs(base) < MIN_POWER) {
+        // Only force MIN_POWER when far away (prevents end jitter)
+        if (std::abs(err) > MIN_PWR_DISABLE_ZONE_DEG && std::abs(base) < MIN_POWER) {
             base = MIN_POWER * sgn(base);
         }
 
-        int turnFix = (int)(kP_head * headingErrorDeg(headingDeg));
-        turnFix = clamp127(turnFix);
+        // --- Heading hold ---
+        double headErr = headingErrorDeg(headingDeg);
+        headErr = deadband(headErr, HEAD_DB_DEG);
+        headErrFilt = headErrFilt * (1.0 - HEAD_LPF) + headErr * HEAD_LPF;
 
-        setDrive(base + turnFix, base - turnFix, base + turnFix, base - turnFix);
+        int turnFix = (int)(kP_head * headErrFilt);
+        turnFix = (int)clampD(turnFix, -MAX_TURNFIX, MAX_TURNFIX);
+
+        // Proper X-drive mixing: fwd = base, strafe = 0, rot = turnFix
+        int fwd = base;
+        int strafe = 0;
+        int rot = turnFix;
+
+        int lf = fwd + strafe + rot;
+        int rf = fwd - strafe - rot;
+        int lb = fwd - strafe + rot;
+        int rb = fwd + strafe - rot;
+
+        setDrive(lf, rf, lb, rb);
         pros::delay(LOOP_MS);
     }
+
     stopDrive();
     pros::delay(40);
 }
 
-// Strafe mm while holding heading.
+// Strafe mm while holding heading (X-drive correct mixing + heading filter)
 void strafeMmHoldHeading(double mm, double headingDeg, int timeoutMs = 3500) {
     resetDriveEncoders();
 
     const double targetDeg = mmToMotorDeg(mm * SQRT2);
 
     const double kP_dist = 0.65;
-    const double kD_dist = 2.2;
-    const double kP_head = 1.8;
+    const double kD_dist = 0.06;
+
+    const double kP_head = 1.0;
+    const double HEAD_DB_DEG = 1.2;
+    const int    MAX_TURNFIX = 35;
+    const double HEAD_LPF = 0.25;
+
+    const double DIST_ERR_EXIT_DEG = 20.0;
+    const double DIST_VEL_EXIT_DPS = 60.0;
+
+    const double MIN_PWR_DISABLE_ZONE_DEG = 120.0;
 
     double lastErr = targetDeg;
     int start = pros::millis();
     int lastT = start;
+
+    double headErrFilt = 0.0;
 
     while (pros::millis() - start < timeoutMs) {
         int now = pros::millis();
@@ -202,19 +258,33 @@ void strafeMmHoldHeading(double mm, double headingDeg, int timeoutMs = 3500) {
         double deriv = (err - lastErr) / dt;
         lastErr = err;
 
-        if (std::abs(err) < 10.0) break;
+        if (std::abs(err) < DIST_ERR_EXIT_DEG && std::abs(deriv) < DIST_VEL_EXIT_DPS) break;
 
         int base = (int)(kP_dist * err + kD_dist * deriv);
         base = clamp127(base);
 
-        if (std::abs(base) < MIN_POWER) {
+        if (std::abs(err) > MIN_PWR_DISABLE_ZONE_DEG && std::abs(base) < MIN_POWER) {
             base = MIN_POWER * sgn(base);
         }
 
-        int turnFix = (int)(kP_head * headingErrorDeg(headingDeg));
-        turnFix = clamp127(turnFix);
+        double headErr = headingErrorDeg(headingDeg);
+        headErr = deadband(headErr, HEAD_DB_DEG);
+        headErrFilt = headErrFilt * (1.0 - HEAD_LPF) + headErr * HEAD_LPF;
 
-        setDrive(base + turnFix, -base - turnFix, -base + turnFix, base - turnFix);
+        int turnFix = (int)(kP_head * headErrFilt);
+        turnFix = (int)clampD(turnFix, -MAX_TURNFIX, MAX_TURNFIX);
+
+        // Proper X-drive mixing: fwd = 0, strafe = base, rot = turnFix
+        int fwd = 0;
+        int strafe = base;
+        int rot = turnFix;
+
+        int lf = fwd + strafe + rot;
+        int rf = fwd - strafe - rot;
+        int lb = fwd - strafe + rot;
+        int rb = fwd + strafe - rot;
+
+        setDrive(lf, rf, lb, rb);
         pros::delay(LOOP_MS);
     }
 
@@ -228,17 +298,25 @@ void initialize() {
     while (imu.is_calibrating()) {
         pros::delay(20);
     }
+
+    // Optional but recommended: drivetrain braking as BRAKE not HOLD to reduce buzz
+    LF.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
+    RF.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
+    LB.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
+    RB.set_brake_mode(pros::E_MOTOR_BRAKE_BRAKE);
 }
 
 void autonomous() {
-    driveMmHoldHeading(10.0, 0);    
+    driveMmHoldHeading(10.0, 0);
     turnToHeading(90.0);
     strafeMmHoldHeading(10.0, 90.0);
     Intake.move(720);
     pros::delay(1000);
 }
+
 void opcontrol() {
-    imu.reset();
+    // Don't recalibrate IMU here; just zero it if you want.
+    imu.tare_heading();
 
     // Intake toggle state
     static bool lastR1 = false;
